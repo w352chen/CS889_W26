@@ -342,7 +342,7 @@ with st.sidebar:
             else:
                 st.warning("Enter a topic first")
     
-    st.divider()
+    st.markdown("---")
     
     # ChatGPT-style conversation area
     st.caption("Chat with AI")
