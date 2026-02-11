@@ -1,5 +1,5 @@
 python-dotenv
 google-genai
 pandas
-streamlit>=1.18
+streamlit>=1.20
 altair<5
