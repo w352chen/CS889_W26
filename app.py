@@ -202,6 +202,22 @@ def gemini_generate(prompt: str, model: str = DEFAULT_GEMINI_MODEL) -> str:
         raise RuntimeError(f"Gemini error: {e}")
 
 
+def clean_keyword(keyword: str) -> str:
+    """Remove quotes, backslashes, brackets and other unwanted punctuation from keywords."""
+    # Remove common unwanted characters
+    cleaned = keyword.strip()
+    # Remove quotes (both single and double)
+    cleaned = cleaned.replace('"', '').replace("'", '')
+    # Remove backslashes
+    cleaned = cleaned.replace('\\', '')
+    # Remove brackets
+    cleaned = cleaned.replace('[', '').replace(']', '')
+    cleaned = cleaned.replace('{', '').replace('}', '')
+    # Remove leading/trailing punctuation but keep hyphens and spaces inside
+    cleaned = cleaned.strip('.,;:!?(){}[]"\'\\/')
+    return cleaned.strip()
+
+
 def gemini_suggest_keywords(topic: str, rq: str) -> Tuple[List[str], List[str]]:
     prompt = f"""
 You help researchers find literature. Given topic and optional research question, output JSON:
@@ -210,17 +226,40 @@ You help researchers find literature. Given topic and optional research question
 Topic: {topic}
 Research question: {rq or "(none)"}
 
-Return ONLY valid JSON."""
+Return ONLY valid JSON with clean keywords (no quotes, backslashes, or brackets)."""
 
     raw = gemini_generate(prompt)
+    
+    # Remove markdown code blocks (```json and ```)
+    raw = raw.strip()
+    if raw.startswith("```json"):
+        raw = raw[7:]
+    elif raw.startswith("```"):
+        raw = raw[3:]
+    if raw.endswith("```"):
+        raw = raw[:-3]
+    raw = raw.strip()
+    
     try:
         data = json.loads(raw)
-        kws = [str(x).strip() for x in data.get("keywords", []) if str(x).strip()][:20]
-        ss = [str(x).strip() for x in data.get("search_strings", []) if str(x).strip()][:10]
+        # Clean keywords by removing unwanted punctuation and labels
+        kws = [clean_keyword(str(x)) for x in data.get("keywords", []) if str(x).strip()]
+        # Filter out empty strings, label texts, and markdown artifacts
+        kws = [k for k in kws if k and k.lower() not in ['keywords', 'search_strings', 'json', '']][:20]
+        
+        # Search strings can keep quotes for exact matching
+        ss = [str(x).strip() for x in data.get("search_strings", []) if str(x).strip()]
+        ss = [s for s in ss if s.lower() not in ['keywords', 'search_strings']][:10]
         return kws, ss
     except Exception:
+        # Fallback parsing
         lines = [ln.strip("-• \t") for ln in raw.splitlines() if ln.strip()]
-        return lines[:15], [ln for ln in lines if "AND" in ln.upper() or '"' in ln][:5]
+        # Remove lines that are just labels or markdown
+        lines = [ln for ln in lines if ln.lower() not in ['keywords:', 'search_strings:', 'keywords', 'search_strings', '```json', '```', '']]
+        kws = [clean_keyword(ln) for ln in lines]
+        kws = [k for k in kws if k and "AND" not in k.upper() and k.lower() not in ['keywords', 'search_strings']][:15]
+        ss = [ln for ln in lines if ("AND" in ln.upper() or '"' in ln) and ln.lower() not in ['keywords', 'search_strings']][:5]
+        return kws, ss
 
 
 def gemini_brainstorm(user_msg: str, history: List[dict]) -> str:
@@ -280,7 +319,7 @@ with st.sidebar:
             key="rq_input"
         )
         
-        if st.button("✨ Get Keywords from AI", use_container_width=True):
+        if st.button("✨ Suggest Search Keywords", use_container_width=True):
             if not GEMINI_API_KEY:
                 st.error("Missing GEMINI_API_KEY in .env")
             elif topic_input.strip():
@@ -335,14 +374,6 @@ with st.sidebar:
             st.session_state.ai_search_strings = []
             st.rerun()
     
-    st.divider()
-    
-    # Selected papers count
-    n_sel = len(st.session_state.selected)
-    st.caption(f"📎 {n_sel} paper{'s' if n_sel != 1 else ''} selected")
-    if st.button("Clear selected", use_container_width=True):
-        st.session_state.selected = {}
-        st.rerun()
 
 
 # -----------------------------
@@ -393,15 +424,19 @@ with tab_search:
     if st.session_state.ai_keyword_suggestions or st.session_state.ai_search_strings:
         with st.expander("✨ AI Keyword Suggestions", expanded=True):
             if st.session_state.ai_keyword_suggestions:
-                st.caption("Click keywords to add to search:")
-                chip_cols = st.columns(6)
-                for i, kw in enumerate(st.session_state.ai_keyword_suggestions[:12]):
-                    if chip_cols[i % 6].button(kw, key=f"kw_{i}", use_container_width=True):
-                        st.session_state.query = (st.session_state.query + " " + kw).strip()
-                        st.rerun()
+                # Display keywords in rows of 5, only create columns needed
+                kws = st.session_state.ai_keyword_suggestions[:15]
+                for row_start in range(0, len(kws), 5):
+                    row_kws = kws[row_start:row_start + 5]
+                    cols = st.columns(len(row_kws))
+                    for i, kw in enumerate(row_kws):
+                        with cols[i]:
+                            if st.button(kw, key=f"kw_{row_start + i}", use_container_width=True):
+                                st.session_state.query = (st.session_state.query + " " + kw).strip()
+                                st.rerun()
             
             if st.session_state.ai_search_strings:
-                st.caption("Click to use search string:")
+                st.caption("Search strings:")
                 for j, ss in enumerate(st.session_state.ai_search_strings[:4]):
                     if st.button(f"🔍 {ss[:55]}{'...' if len(ss) > 55 else ''}", key=f"ss_{j}"):
                         st.session_state.query = ss
