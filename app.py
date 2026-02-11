@@ -355,7 +355,7 @@ with st.sidebar:
                 st.markdown(msg["content"])
     
     # Chat input at bottom
-    user_msg = st.chat_input("Ask about keywords, search strategies, research angles...")
+    user_msg = st.chat_input("Want to refine your keywords or discuss search strategies? Ask here…")
     if user_msg:
         st.session_state.brainstorm_history.append({"role": "user", "content": user_msg})
         with st.spinner("Thinking..."):
